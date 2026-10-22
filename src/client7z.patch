@@ -1,0 +1,48 @@
+--- a/CPP/7zip/UI/Client7z/Client7z.cpp
++++ b/CPP/7zip/UI/Client7z/Client7z.cpp
+@@ -367,13 +367,20 @@
+   NName::NormalizeDirPathPrefix(_directoryPath);
+ }
+ 
+-Z7_COM7F_IMF(CArchiveExtractCallback::SetTotal(UInt64 /* size */))
++Z7_COM7F_IMF(CArchiveExtractCallback::SetTotal(UInt64 size))
+ {
++  Ev_OnTotal(size);
+   return S_OK;
+ }
+ 
+-Z7_COM7F_IMF(CArchiveExtractCallback::SetCompleted(const UInt64 * /* completeValue */))
++Z7_COM7F_IMF(CArchiveExtractCallback::SetCompleted(const UInt64 * completeValue))
+ {
++  if (completeValue)
++  {
++    Ev_OnProgress(*completeValue);
++    if (Ev_IsCancelled())
++      return E_ABORT;
++  }
+   return S_OK;
+ }
+ 
+@@ -655,13 +662,20 @@
+   }
+ };
+ 
+-Z7_COM7F_IMF(CArchiveUpdateCallback::SetTotal(UInt64 /* size */))
++Z7_COM7F_IMF(CArchiveUpdateCallback::SetTotal(UInt64 size))
+ {
++  Ev_OnTotal(size);
+   return S_OK;
+ }
+ 
+-Z7_COM7F_IMF(CArchiveUpdateCallback::SetCompleted(const UInt64 * /* completeValue */))
++Z7_COM7F_IMF(CArchiveUpdateCallback::SetCompleted(const UInt64 * completeValue))
+ {
++  if (completeValue)
++  {
++    Ev_OnProgress(*completeValue);
++    if (Ev_IsCancelled())
++      return E_ABORT;
++  }
+   return S_OK;
+ }
+ 
