@@ -16,11 +16,11 @@ if (!7zPack.Pack("Z:\no\such\file.txt", arc))
   MsgBox % Format("此处为报错演示`n错误码：{}`n错误信息：{}", 7zPack.ErrCode(), 7zPack.ErrText())
 
 ; 自定义 7zPack.dll 位置（7z.dll 必须与 7zPack.dll 同目录）
-7zPack.Init("X:\Tools\7zPack\7zPack.dll")
-7zPack.Pack(src, arc)
+; 7zPack.Init("X:\Tools\7zPack\7zPack.dll")
+; 7zPack.Pack(src, arc)
 ; 或
-z := new 7zPack("Y:\Tools\7zPack\7zPack.dll")
-z.Unpack(arc, out)
+; z := new 7zPack("Y:\Tools\7zPack\7zPack.dll")
+; z.Unpack(arc, out)
 
 ExitApp
 

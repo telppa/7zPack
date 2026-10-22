@@ -11,14 +11,14 @@
 #    SEVENZIP_VER=v26.02-v1.5.7-R2 ./build.sh      # 指定 tag（分支名也可以）
 #    SRCDIR=/path/to/7-Zip-zstd ./build.sh         # 用已解压的源码，不联网
 #    CXX=/d/w64devkit/bin/x86_64-w64-mingw32-g++.exe ./build.sh
-#    OUT=./7zpack.dll ./build.sh                   # 指定输出
+#    OUT=./7zPack.dll ./build.sh                   # 指定输出
 # =============================================================================
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SEVENZIP_VER="${SEVENZIP_VER:-master}"
 BUILD="${BUILD:-$HERE/build}"
-OUT="${OUT:-$HERE/../7zpack.dll}"
+OUT="${OUT:-$HERE/../7zPack.dll}"
 CXX="${CXX:-x86_64-w64-mingw32-g++}"
 CC="${CC:-x86_64-w64-mingw32-gcc}"
 

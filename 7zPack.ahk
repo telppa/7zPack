@@ -69,7 +69,7 @@ class 7zPack
             throw Exception("无法加载 7zPack.dll：" . 7zPack.Dll, -1)
     }
 
-    ;  Pack(源, 归档, 方法:=1, 级别:=9, 线程:=0, 固实:=1, zstdMax:=0, 密码:="", 显示进度:=0)
+    ;  Pack(源, 归档, 方法:=1, 级别:=3, 线程:=0, 固实:=1, zstdMax:=0, 密码:="", 显示进度:=0)
     ;    方法    : 0=LZMA2；1=ZSTD；2=BROTLI；3=LZ4；4=LZ5；5=LIZARD；6=COPY
     ;    级别    : 0..9（-1=默认）
     ;    线程    : 0=自动
