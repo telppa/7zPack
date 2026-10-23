@@ -4,32 +4,43 @@
 
 支持官方 7-Zip 与 [7-Zip-zstd](https://github.com/mcmilk/7-Zip-zstd) 分支，所以能用上 ZSTD / Brotli / LZ4 这些新算法。
 
+## 什么是 zstd
+
+zstd 是一种新的压缩算法，相同压缩率下，速度远超其它；相同速度下，压缩率又是最高的。
+
+所以强烈推荐使用此算法进行文件压缩。
+
 ## 示例
 
 ```ahk
-; 压缩：源 → 归档
+; 压缩：源 → 归档（从 Documents 这个文件夹本身开始压缩）
 7zPack.Pack("C:\Users\me\Documents", "D:\bak\docs.7z")
 
-; 解压：归档 → 目录
-7zPack.Unpack("D:\bak\docs.7z", "D:\restore")
+; 压缩：源 → 归档（从 Documents 这个文件夹里面的内容开始压缩）
+7zPack.Pack("C:\Users\me\Documents\*", "D:\bak\docs.7z")
+
+; 解压：归档 → 目录（7z / zip / rar / tar / gz / xz …自动识别）
+7zPack.Unpack("D:\bak\docs.zip", "D:\restore")
 
 ; 失败时取说明
 if (!7zPack.Pack("C:\Users\me\Documents", "D:\bak\docs.7z"))
     MsgBox % 7zPack.ErrText()
 
+; 加载库
 #Include 7zPack.ahk
 ```
 
 ## 特性
 
-|    |                                                   |
-| -- | ------------------------------------------------- |
-| 算法 | LZMA2 / ZSTD / Brotli / LZ4 / LZ5 / Lizard / Copy |
-| 参数 | 压缩级别 0–9、线程数、固实开关、`zstd --max`                    |
-| 加密 | 支持密码（压缩与解压）                                       |
-| 进度 | 可选的内建进度窗口，可取消                                     |
-| 安全 | 先写 `.tmp` 再原子替换，中途失败不会破坏旧归档                       |
-| 依赖 | 只需 `7z.dll`，运行时动态加载，换版本不用重编译                      |
+|    |                                                                                        |
+| -- | -------------------------------------------------------------------------------------- |
+| 压缩 | **只支持 7z 容器**（LZMA2 / ZSTD / Brotli / LZ4 / LZ5 / Lizard / Copy 七种算法可选），归档后缀名只能用 `.7z` |
+| 解压 | 支持 `7z.dll` 里注册的全部格式（7z/zip/rar/tar/gz/xz/iso…），按扩展名 + 文件头自动识别                         |
+| 参数 | 压缩级别 0–9、线程数、固实开关、`zstd --max`                                                         |
+| 加密 | 支持密码（压缩与解压）                                                                            |
+| 进度 | 可选的内建进度窗口，可取消                                                                          |
+| 安全 | 先写 `.tmp` 再原子替换，中途失败不会破坏旧归档                                                            |
+| 依赖 | 只需 `7z.dll`，运行时动态加载，换版本不用重编译                                                           |
 
 ## 目录
 
@@ -80,15 +91,12 @@ AHK 是单线程，`DllCall` 期间脚本卡住，`SetTimer` 不跑、`Gui` 不�
 
 ## 7z.dll 版本兼容性
 
-本 DLL 对 `7z.dll` 只有一个导出依赖（`CreateObject`），其余全靠 COM 接口，所以**换 7z.dll 不需要重新编译**。实测 9 个版本：
+本 DLL 只用 `7z.dll` 的 3 个扁平导出（`CreateObject` / `GetNumberOfFormats` / `GetHandlerProperty2`），其余全靠 COM 接口，所以**换 7z.dll 不需要重新编译**。实测 8 个版本：
 
-| 7z.dll                                   | LZMA2 | ZSTD | Brotli | 解压 |
-| ---------------------------------------- | ----- | ---- | ------ | -- |
-| 官方 22.01 / 23.01 / 24.09 / 25.01 / 26.05 | OK    | 失败   | 失败     | OK |
-| zstd 分支 24.09 / 25.01 / 26.02            | OK    | OK   | OK     | OK |
-| TotalCmd 版 `tc7z64.dll`                  | OK    | OK   | OK     | OK |
-
-官方版请求 zstd 会返回 `7`——它没坏，只是官方版不支持 zstd 算法。
+| 7z.dll                                   | 压缩 LZMA2 | 压缩 ZSTD | 压缩 Brotli | 解压 |
+| ---------------------------------------- | -------- | ------- | --------- | -- |
+| 官方 22.01 / 23.01 / 24.09 / 25.01 / 26.05 | OK       | 失败      | 失败        | OK |
+| zstd 分支 24.09 / 25.01 / 26.02            | OK       | OK      | OK        | OK |
 
 ## 从源码构建
 
