@@ -70,6 +70,8 @@ class 7zPack
     }
 
     ;  Pack(源, 归档, 方法:=1, 级别:=3, 线程:=0, 固实:=1, zstdMax:=0, 密码:="", 显示进度:=0)
+    ;    源      : 目录或文件；结尾写 \* 或 \. = 只压该目录里的内容，归档里不带这一层
+    ;    归档    : 只能写 7z 容器，后缀名请用 .7z
     ;    方法    : 0=LZMA2；1=ZSTD；2=BROTLI；3=LZ4；4=LZ5；5=LIZARD；6=COPY
     ;    级别    : 0..9（-1=默认）
     ;    线程    : 0=自动
@@ -101,6 +103,7 @@ class 7zPack
     }
 
     ;  Unpack(归档, 目标目录, 密码:="", 显示进度:=0)
+    ;    归档 : 7z / zip / rar / tar / gz / xz …  凡是 7z.dll 带解码器的格式都行，自动识别
     ;    返回 : true=成功；false=失败
     Unpack(arc, destDir, pwd := "", showProgress := 0)
     {

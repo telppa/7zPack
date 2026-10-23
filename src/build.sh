@@ -127,7 +127,9 @@ echo "== 编译 7zpack"
 "$CXX" $FLAGS -c "$C7Z/7zpack.cpp" -o "$OBJ/7zpack.o"
 
 echo "== 链接"
-"$CXX" -shared -static -static-libgcc -static-libstdc++ \
+# -s = 去掉符号表和调试信息（MinGW 默认会塞进 ~240 KB，运行完全用不到）；
+#      需要调试就把它去掉。
+"$CXX" -shared -s -static -static-libgcc -static-libstdc++ \
   -o "$OUT" "$OBJ"/*.o \
   -lole32 -loleaut32 -luuid -luser32 -ladvapi32 -lgdi32 -lshell32
 

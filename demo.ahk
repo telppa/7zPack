@@ -5,8 +5,11 @@ out := A_Temp . "\7zPack_demo_out"     ; 解压到哪
 ; 压缩：源 → 归档（默认 zstd 级别3）
 7zPack.Pack(src, arc)
 
-; 压缩：源 → 归档（指定 brotli 级别9）
-7zPack.Pack(src, arc, 2, 9)
+; 压缩：源 → 归档（指定 brotli 级别9 包含本目录）
+7zPack.Pack(A_ScriptDir "\src\", arc, 2, 9)
+
+; 压缩：源 → 归档（指定 brotli 级别9 不包含本目录自身）
+7zPack.Pack(A_ScriptDir "\src\*", arc, 2, 9)
 
 ; 解压：归档 → 目录
 7zPack.Unpack(arc, out)

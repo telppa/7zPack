@@ -8,6 +8,8 @@
 //  之后一起编译，所以可以直接复用 Client7z 里已经写好的各种回调类。
 // ============================================================================
 
+#include <oleauto.h>        // SysStringByteLen：格式 CLSID 是以「二进制 BSTR」形式报出来的
+
 // ---------------------------- 对外接口 --------------------------------------
 struct PACK_OPTS
 {
@@ -33,13 +35,16 @@ enum
   PK_E_PARTIAL = 8,   // 部分文件读不了(其余已压入)
   PK_E_OPENARC = 9,   // 打不开归档(损坏/密码)
   PK_E_EXTRACT = 10,  // 解压失败
-  PK_E_CANCEL  = 11   // 用户点了取消
+  PK_E_CANCEL  = 11,  // 用户点了取消
+  PK_E_FORMAT  = 12   // 归档扩展名与「只写 7z 容器」冲突
 };
 
 static UString g_Err;
 static volatile LONG g_CancelReq = 0;   // 进度窗口点「取消」后置 1，回调据此中断
 static HMODULE g_h7z;
 static Func_CreateObject g_CreateObject;
+static Func_GetNumberOfFormats g_GetNumberOfFormats;
+static Func_GetHandlerProperty2 g_GetHandlerProperty2;
 
 static void SetErr(const wchar_t *s)          { g_Err = s; }
 static void SetErr2(const wchar_t *s, const UString &tail)
@@ -64,12 +69,169 @@ static bool Load7zModule()
   if (!g_h7z)
     return false;
   g_CreateObject = Z7_GET_PROC_ADDRESS(Func_CreateObject, g_h7z, "CreateObject");
+  g_GetNumberOfFormats = Z7_GET_PROC_ADDRESS(Func_GetNumberOfFormats, g_h7z, "GetNumberOfFormats");
+  g_GetHandlerProperty2 = Z7_GET_PROC_ADDRESS(Func_GetHandlerProperty2, g_h7z, "GetHandlerProperty2");
   return g_CreateObject != NULL;
 }
 
+// ---------------------- 归档格式表（解压用） --------------------------------
+// 每种格式在 7z.dll 里都是一个独立的 handler（各自的 CLSID）。
+// 只用 7z 的 CLSID 去开 zip 必然失败 —— 这就是「7-Zip 能解、本 DLL 报不是有效 7z 归档」的原因。
+// 7-Zip 自己的界面也是拿 GetHandlerProperty2 把格式列出来，再挨个试着打开。
+struct CFormatEntry
+{
+  CLSID   Clsid;
+  UString Ext;        // 该格式的扩展名，空格分隔，例如 "zip 001"
+  bool    HasSig;     // 有没有文件头特征（tar / brotli 这类没有）
+};
+
+static CObjectVector<CFormatEntry> g_Formats;
+static bool g_FormatsLoaded = false;
+
+static bool LoadFormats()
+{
+  if (g_FormatsLoaded)
+    return !g_Formats.IsEmpty();
+  g_FormatsLoaded = true;
+  if (!g_GetNumberOfFormats || !g_GetHandlerProperty2)
+    return false;
+
+  UInt32 n = 0;
+  if (g_GetNumberOfFormats(&n) != S_OK)
+    return false;
+
+  for (UInt32 i = 0; i < n; i++)
+  {
+    NCOM::CPropVariant cls;
+    if (g_GetHandlerProperty2(i, NArchive::NHandlerPropID::kClassID, &cls) != S_OK)
+      continue;
+    if (cls.vt != VT_BSTR || !cls.bstrVal)
+      continue;
+    // 注意：这里报的是「二进制 GUID」而不是字符串，16 个字节直接就是 CLSID
+    if (::SysStringByteLen(cls.bstrVal) != sizeof(GUID))
+      continue;
+    CLSID id = *(const GUID *)(const void *)cls.bstrVal;
+
+    CFormatEntry e;
+    e.Clsid = id;
+    e.HasSig = false;
+    NCOM::CPropVariant ext;
+    if (g_GetHandlerProperty2(i, NArchive::NHandlerPropID::kExtension, &ext) == S_OK
+        && ext.vt == VT_BSTR && ext.bstrVal)
+      e.Ext = ext.bstrVal;
+
+    // 有文件头的格式才能拿内容去猜；没有文件头的（brotli / tar）只认扩展名，
+    // 否则它会把任意垃圾字节都当成自己的数据，报出来的错就成了「解压失败」而不是「不是压缩包」
+    NCOM::CPropVariant sig;
+    if (g_GetHandlerProperty2(i, NArchive::NHandlerPropID::kSignature, &sig) == S_OK
+        && sig.vt == VT_BSTR && sig.bstrVal && ::SysStringByteLen(sig.bstrVal) > 0)
+      e.HasSig = true;
+    else
+    {
+      NCOM::CPropVariant multi;
+      if (g_GetHandlerProperty2(i, NArchive::NHandlerPropID::kMultiSignature, &multi) == S_OK
+          && multi.vt == VT_BSTR && multi.bstrVal && ::SysStringByteLen(multi.bstrVal) > 0)
+        e.HasSig = true;
+    }
+    g_Formats.Add(e);
+  }
+  return !g_Formats.IsEmpty();
+}
+
+// 归档扩展名（小写，不含点）；没有扩展名返回空
+static UString ArchiveExt(const FString &path)
+{
+  UString s = fs2us(path);
+  int dot = s.ReverseFind_Dot();
+  if (dot < 0 || dot < s.ReverseFind_PathSepar())
+    return UString();
+  UString e = s.Ptr(dot + 1);
+  e.MakeLower_Ascii();
+  return e;
+}
+
+// 扩展名列表（空格分隔）里有没有这个扩展名，整词相等才算
+static bool ExtListHas(const UString &list, const UString &ext)
+{
+  if (ext.IsEmpty())
+    return false;
+  unsigned i = 0;
+  while (i < list.Len())
+  {
+    while (i < list.Len() && list[i] == L' ')
+      i++;
+    const unsigned s = i;
+    while (i < list.Len() && list[i] != L' ')
+      i++;
+    if (i - s == ext.Len())
+    {
+      unsigned k = 0;
+      while (k < ext.Len() && list[s + k] == ext[k])
+        k++;
+      if (k == ext.Len())
+        return true;
+    }
+  }
+  return false;
+}
+
+// 扩展名对得上的格式先试，其余再兜一遍
+static HRESULT OpenArchive(IInStream *inStream, const UInt64 *scanSize,
+    IArchiveOpenCallback *openCb, const FString &arcFs, CMyComPtr<IInArchive> &archive)
+{
+  if (!LoadFormats())
+    return E_NOTIMPL;
+
+  const UString ext = ArchiveExt(arcFs);
+  HRESULT last = S_FALSE;
+  CMyComPtr<IInArchive> emptyOk;      // 「打开了但里面 0 项」的候选，兜底用
+
+  for (int pass = 0; pass < 2; pass++)
+  {
+    for (unsigned i = 0; i < g_Formats.Size(); i++)
+    {
+      const CFormatEntry &fe = g_Formats[i];
+      const bool prefer = !ext.IsEmpty() && fe.Ext.Find(ext) >= 0;
+      if (prefer != (pass == 0))
+        continue;
+      if (pass != 0 && !fe.HasSig)      // 没有文件头的格式只在扩展名对上时使用
+        continue;
+
+      inStream->Seek(0, STREAM_SEEK_SET, NULL);     // 每个 handler 都从文件头开始
+      CMyComPtr<IInArchive> a;
+      if (!g_CreateObject || g_CreateObject(&fe.Clsid, &IID_IInArchive, (void **)&a) != S_OK || !a)
+        continue;
+      HRESULT h = a->Open(inStream, scanSize, openCb);
+      if (h != S_OK)
+      {
+        last = h;
+        continue;
+      }
+      // 有些 handler 对任何垃圾字节都会返回 S_OK，靠「有没有条目」把它筛掉
+      UInt32 nItems = 0;
+      a->GetNumberOfItems(&nItems);
+      if (nItems > 0)
+      {
+        archive = a;
+        return S_OK;
+      }
+      if (!emptyOk)
+        emptyOk = a;
+    }
+  }
+
+  if (emptyOk)                        // 真·空归档
+  {
+    archive = emptyOk;
+    return S_OK;
+  }
+  return last;
+}
+
 // 递归收集：diskPath = 磁盘真实路径, arcName = 归档内名字(用 '/')
+// addSelf=false 时只收目录里的内容，自己不进归档（用于「不保留最外层目录」）
 static HRESULT CollectItems(const FString &diskPath, const UString &arcName,
-    CObjectVector<CDirItem> &items, FStringVector &failed)
+    CObjectVector<CDirItem> &items, FStringVector &failed, bool addSelf = true)
 {
   NFind::CFileInfo fi;
   if (!fi.Find(diskPath))
@@ -78,6 +240,7 @@ static HRESULT CollectItems(const FString &diskPath, const UString &arcName,
     return S_FALSE;
   }
 
+  if (addSelf)
   {
     CDirItem di(fi);
     di.Path_For_Handler = arcName;
@@ -108,7 +271,8 @@ static HRESULT CollectItems(const FString &diskPath, const UString &arcName,
     childDisk += subInfo.Name;
 
     UString childArc = arcName;
-    childArc.Add_PathSepar();
+    if (!childArc.IsEmpty())
+      childArc.Add_PathSepar();
     childArc += fs2us(subInfo.Name);
 
     CollectItems(childDisk, childArc, items, failed);
@@ -150,26 +314,90 @@ static int PackCore(const wchar_t *archivePath,
     return PK_E_DLL;
   }
 
-  FString srcFs = us2fs(srcPath);
   FString arcFs = us2fs(archivePath);
+
+  // 只写 7z 容器：归档名要是别的已知格式（zip/tar/gz/rar…），直接拒绝。
+  // 否则会产出「名叫 zip、其实是 7z」的文件，别的解压工具打不开。
+  if (LoadFormats())
+  {
+    const UString arcExt = ArchiveExt(arcFs);
+    if (!arcExt.IsEmpty())
+    {
+      bool is7z = false, isOther = false;
+      for (unsigned i = 0; i < g_Formats.Size(); i++)
+      {
+        if (!ExtListHas(g_Formats[i].Ext, arcExt))
+          continue;
+        if (ExtListHas(g_Formats[i].Ext, L"7z"))
+          is7z = true;
+        else
+          isOther = true;
+      }
+      if (!is7z && isOther)
+      {
+        SetErr2(L"Pack 只写 7z 容器，归档名请改成 .7z（当前扩展名: .", arcExt + L"）");
+        return PK_E_FORMAT;
+      }
+    }
+  }
+
+  // 源路径的结尾写法全部归一：
+  //   结尾有多少个 '\' 都无所谓（"D:\dir" "D:\dir\" "D:\dir\\" 都一样，带 dir 这一层）
+  //   只有显式写 "\*" 或 "\." 才是「只压目录里的内容」，归档里不带 dir 这一层
+  UString srcU(srcPath);
+  bool contentsOnly = false;
+  for (;;)
+  {
+    if (srcU.IsEmpty())
+      break;
+
+    const wchar_t last = srcU.Back();
+    if (last == L'\\' || last == L'/')
+    {
+      if (srcU.Len() <= 3 && srcU[1] == L':')      // 盘根 "D:\"，原样保留
+        break;
+      srcU.Delete(srcU.Len() - 1);
+      continue;
+    }
+    if ((last == L'*' || last == L'.') && srcU.Len() >= 2)
+    {
+      const wchar_t prev = srcU[srcU.Len() - 2];
+      if (prev == L'\\' || prev == L'/')
+      {
+        srcU.Delete(srcU.Len() - 1);
+        contentsOnly = true;                       // "\*" 和 "\." 都是「只压内容」
+        continue;
+      }
+    }
+    break;
+  }
+  FString srcFs = us2fs(srcU);
 
   NFind::CFileInfo fi;
   if (!fi.Find(srcFs))
   {
-    SetErr2(L"源路径不存在: ", UString(srcPath));
+    SetErr2(L"源路径不存在: ", srcU);
+    return PK_E_SRC;
+  }
+  if (contentsOnly && !fi.IsDir())
+  {
+    SetErr2(L"\\* / \\. 只能用在目录上: ", srcU);
     return PK_E_SRC;
   }
 
-  // 归档内的根名：源路径最后一个分量
-  UString srcU(srcPath);
-  int sep = srcU.ReverseFind_PathSepar();
-  UString rootName = srcU.Ptr(sep + 1);
-  if (rootName.IsEmpty())
-    rootName = L"data";
+  // 归档内的根名：源路径最后一个分量；contentsOnly 时为空（内容直接落在根上）
+  UString rootName;
+  if (!contentsOnly)
+  {
+    const int sep = srcU.ReverseFind_PathSepar();
+    rootName = srcU.Ptr(sep + 1);
+    if (rootName.IsEmpty())
+      rootName = L"data";
+  }
 
   CObjectVector<CDirItem> items;
   FStringVector failed;
-  CollectItems(srcFs, rootName, items, failed);
+  CollectItems(srcFs, rootName, items, failed, !contentsOnly);
   if (items.IsEmpty())
   {
     SetErr(L"没有可压缩的内容");
@@ -311,13 +539,6 @@ static int UnpackCore(const wchar_t *archivePath,
   }
 
   CMyComPtr<IInArchive> archive;
-  if (!g_CreateObject || g_CreateObject(&CLSID_Format, &IID_IInArchive,
-      (void **)&archive) != S_OK || !archive)
-  {
-    SetErr(L"7z.dll 未返回 IInArchive");
-    return PK_E_CREATE;
-  }
-
   {
     CArchiveOpenCallback *openCbSpec = new CArchiveOpenCallback;
     CMyComPtr<IArchiveOpenCallback> openCb = openCbSpec;
@@ -327,9 +548,10 @@ static int UnpackCore(const wchar_t *archivePath,
       openCbSpec->Password = password;
     }
     const UInt64 scanSize = (UInt64)1 << 23;
-    if (archive->Open(inStream, &scanSize, openCb) != S_OK)
+    if (OpenArchive(inStream, &scanSize, openCb, arcFs, archive) != S_OK)
     {
-      SetErr(L"不是有效的 7z 归档, 或密码错误");
+      SetErr2(L"无法识别归档格式（文件损坏 / 7z.dll 缺该格式的解码器 / 密码错误）: ",
+          UString(archivePath));
       return PK_E_OPENARC;
     }
   }
@@ -354,9 +576,9 @@ static int UnpackCore(const wchar_t *archivePath,
       SetErr(L"已取消");
       return PK_E_CANCEL;
     }
-    // 最常见的两种原因都写出来：加密归档没给密码、归档损坏
+    // 走到这里说明格式认出来了，失败基本是密码或数据本身
     wchar_t ebuf[192];
-    ::wsprintfW(ebuf, L"解压失败（HRESULT 0x%08X）：归档损坏，或密码错误/缺失",
+    ::wsprintfW(ebuf, L"解压失败（HRESULT 0x%08X）：密码错误/缺失，或归档内数据损坏",
         (unsigned)res);
     SetErr(ebuf);
     return PK_E_EXTRACT;
