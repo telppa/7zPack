@@ -4,22 +4,19 @@
 
 支持官方 7-Zip 与 [7-Zip-zstd](https://github.com/mcmilk/7-Zip-zstd) 分支，所以能用上 ZSTD / Brotli / LZ4 这些新算法。
 
-## 什么是 zstd
+## 什么是 ZSTD
 
-zstd 是一种新的压缩算法，相同压缩率下，速度远超其它；相同速度下，压缩率又是最高的。
+ZSTD 是一种新的压缩算法，相同压缩率下，速度远超其它；相同速度下，压缩率又是最高的。
 
 所以强烈推荐使用此算法进行文件压缩。
 
 ## 示例
 
 ```ahk
-; 压缩：源 → 归档（从 Documents 这个文件夹本身开始压缩）
+; 压缩：源 → 归档
 7zPack.Pack("C:\Users\me\Documents", "D:\bak\docs.7z")
 
-; 压缩：源 → 归档（从 Documents 这个文件夹里面的内容开始压缩）
-7zPack.Pack("C:\Users\me\Documents\*", "D:\bak\docs.7z")
-
-; 解压：归档 → 目录（7z / zip / rar / tar / gz / xz …自动识别）
+; 解压：归档 → 目录
 7zPack.Unpack("D:\bak\docs.zip", "D:\restore")
 
 ; 失败时取说明
@@ -47,7 +44,7 @@ if (!7zPack.Pack("C:\Users\me\Documents", "D:\bak\docs.7z"))
 ```
 7zPack/
 ├── 7zPack.dll          编译好的 x64 DLL
-├── 7z.dll              默认提供 zstd 分支版本（可用速度最快的 zstd 算法压缩），也可以自行使用官方 7-Zip 版本替换
+├── 7z.dll              默认提供 zstd 分支版本（可用速度最快的 ZSTD 算法压缩），也可以自行使用官方 7-Zip 版本替换
 ├── 7zPack.ahk          AHK v1 库
 ├── demo.ahk            简单示例，双击即可运行
 ├── test.ahk            完整自检（压缩/解压/校验/加密/错误分支）
@@ -61,10 +58,10 @@ if (!7zPack.Pack("C:\Users\me\Documents", "D:\bak\docs.7z"))
 ## 常用组合
 
 ```ahk
-; zstd 级别3 自动线程数 固实（此级别压缩与解压速度巨快）
+; ZSTD 级别3 自动线程数 固实（此级别压缩与解压速度巨快）
 7zPack.Pack(src, arc)
 
-; zstd 级别5 自动线程数 固实 加密 带进度条
+; ZSTD 级别5 自动线程数 固实 加密 带进度条
 7zPack.Pack(src, arc, 1, 5, 0, 1, 0, "密码", 1)
 7zPack.Unpack(arc, out, "密码", 1)
 ```
